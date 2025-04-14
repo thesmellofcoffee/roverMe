@@ -1,0 +1,400 @@
+import UIKit
+import FirebaseCore
+import FirebaseDatabase
+import FirebaseAuth
+import CoreLocation
+import MapKit
+
+struct Checkpoint {
+    let coordinate: CLLocationCoordinate2D
+    let compassDirection: String
+}
+
+enum CheckpointType {
+    case target
+    case reached
+    case normal
+}
+
+class CheckpointAnnotation: MKPointAnnotation {
+    var checkpointType: CheckpointType = .normal
+}
+
+class MainViewController: UIViewController, CLLocationManagerDelegate, UITableViewDelegate, UITableViewDataSource, MKMapViewDelegate {
+
+    @IBOutlet weak var zoomOut: UIImageView!
+    @IBOutlet weak var zoomIn: UIImageView!
+    @IBOutlet weak var mapView: MKMapView!
+    @IBOutlet weak var checkpointsTableView: UITableView!
+    
+    var databaseRef: DatabaseReference!
+    let locationManager = CLLocationManager()
+    var userLocation: CLLocationCoordinate2D?
+    var roverLocation: CLLocationCoordinate2D?
+    
+    var checkpointList: [Checkpoint] = []
+    
+    var currentTargetCheckpoint: Checkpoint?
+    var lastReachedCheckpoint: Checkpoint?
+    
+    var previousRoverIsReady: Bool?
+    var readyTransitionCounter = 0
+    let readyThreshold = 1
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        databaseRef = Database.database().reference()
+        
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.requestWhenInUseAuthorization()
+        locationManager.startUpdatingLocation()
+        
+        mapView.delegate = self
+        mapView.showsUserLocation = true
+        
+        setupGestures()
+        
+        checkpointsTableView.delegate = self
+        checkpointsTableView.dataSource = self
+        
+        observeRoverIsReady()
+    }
+    
+    func observeRoverIsReady() {
+        databaseRef.child("rover/isReady").observe(.value) { snapshot in
+            guard let isReady = snapshot.value as? Bool else { return }
+            
+            if let previous = self.previousRoverIsReady, previous == false, isReady == true {
+                self.readyTransitionCounter += 1
+                print("Rover isReady transition detected. Count: \(self.readyTransitionCounter)")
+                
+                if self.readyTransitionCounter >= self.readyThreshold {
+                    if !self.checkpointList.isEmpty {
+                        let nextCheckpoint = self.checkpointList.removeFirst()
+                        self.updateNextCheckpoint(nextCheckpoint)
+                        print("Yeni checkpoint gönderildi: \(nextCheckpoint)")
+                        self.checkpointsTableView.reloadData()
+                    }
+                    self.readyTransitionCounter = 0
+                }
+            }
+            
+            self.previousRoverIsReady = isReady
+        }
+    }
+    
+    func setupGestures() {
+        addTapGesture(to: zoomIn, action: #selector(zoomInTrigger))
+        addTapGesture(to: zoomOut, action: #selector(zoomOutTrigger))
+    }
+    
+    func addTapGesture(to imageView: UIImageView, action: Selector) {
+        let tapGesture = UITapGestureRecognizer(target: self, action: action)
+        imageView.isUserInteractionEnabled = true
+        imageView.addGestureRecognizer(tapGesture)
+    }
+    
+    @objc func zoomInTrigger() {
+        var region = mapView.region
+        region.span.latitudeDelta /= 2.0
+        region.span.longitudeDelta /= 2.0
+        mapView.setRegion(region, animated: true)
+    }
+    
+    @objc func zoomOutTrigger() {
+        var region = mapView.region
+        region.span.latitudeDelta *= 2.0
+        region.span.longitudeDelta *= 2.0
+        mapView.setRegion(region, animated: true)
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let userLoc = locations.last else { return }
+        locationManager.stopUpdatingLocation()
+        userLocation = userLoc.coordinate
+        print("User location updated: \(userLoc.coordinate.latitude), \(userLoc.coordinate.longitude)")
+        
+        databaseRef.child("user/location").setValue([
+            "lat": "\(userLoc.coordinate.latitude)",
+            "lon": "\(userLoc.coordinate.longitude)"
+        ])
+        
+        fetchRoverLocation()
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("Location error: \(error.localizedDescription)")
+    }
+    
+    func fetchRoverLocation() {
+        databaseRef.child("rover/location").observeSingleEvent(of: .value) { snapshot in
+            guard let locationData = snapshot.value as? [String: String],
+                  let latString = locationData["lat"],
+                  let lonString = locationData["lon"],
+                  let latitude = Double(latString),
+                  let longitude = Double(lonString) else {
+                print("Error: Rover location data is missing or in wrong format.")
+                return
+            }
+            
+            self.roverLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+            print("Rover location: \(latitude), \(longitude)")
+            
+            DispatchQueue.main.async {
+                self.mapView.removeAnnotations(self.mapView.annotations)
+                
+                if let roverLoc = self.roverLocation {
+                    self.addAnnotation(for: roverLoc, title: "Rover")
+                }
+                if let userLoc = self.userLocation {
+                    self.addAnnotation(for: userLoc, title: "User")
+                }
+                
+                if let roverLoc = self.roverLocation, let userLoc = self.userLocation {
+                    self.calculateRouteCheckpoints(from: roverLoc, to: userLoc)
+                }
+            }
+        }
+    }
+    
+    func calculateRouteCheckpoints(from start: CLLocationCoordinate2D, to end: CLLocationCoordinate2D) {
+        let sourcePlacemark = MKPlacemark(coordinate: start)
+        let destinationPlacemark = MKPlacemark(coordinate: end)
+        
+        let directionRequest = MKDirections.Request()
+        directionRequest.source = MKMapItem(placemark: sourcePlacemark)
+        directionRequest.destination = MKMapItem(placemark: destinationPlacemark)
+        directionRequest.transportType = .automobile
+        
+        let directions = MKDirections(request: directionRequest)
+        directions.calculate { response, error in
+            guard let route = response?.routes.first else {
+                print("Route calculation failed: \(error?.localizedDescription ?? "Unknown error")")
+                return
+            }
+            
+            self.mapView.removeOverlays(self.mapView.overlays)
+            self.mapView.addOverlay(route.polyline, level: .aboveRoads)
+            
+            let interval: CLLocationDistance = 4
+            let frequentCheckpoints = self.generateFrequentCheckpoints(from: route.polyline, interval: interval)
+            
+            self.checkpointList = frequentCheckpoints
+            DispatchQueue.main.async {
+                self.checkpointsTableView.reloadData()
+                if let firstCheckpoint = self.checkpointList.first {
+                    self.updateNextCheckpoint(firstCheckpoint)
+                }
+            }
+        }
+    }
+    
+    func generateFrequentCheckpoints(from polyline: MKPolyline, interval: CLLocationDistance) -> [Checkpoint] {
+        let pointCount = polyline.pointCount
+        var coords = [CLLocationCoordinate2D](repeating: kCLLocationCoordinate2DInvalid, count: pointCount)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: pointCount))
+        
+        var checkpoints: [Checkpoint] = []
+        var currentDistance: CLLocationDistance = 0.0
+        var targetDistance = interval
+        var lastCheckpoint: CLLocationCoordinate2D? = nil
+        
+        for i in 1..<pointCount {
+            let loc1 = CLLocation(latitude: coords[i-1].latitude, longitude: coords[i-1].longitude)
+            let loc2 = CLLocation(latitude: coords[i].latitude, longitude: coords[i].longitude)
+            let segmentDistance = loc1.distance(from: loc2)
+            currentDistance += segmentDistance
+            
+            while currentDistance >= targetDistance {
+                let overshoot = currentDistance - targetDistance
+                let fraction = 1 - (overshoot / segmentDistance)
+                let lat = coords[i-1].latitude + (coords[i].latitude - coords[i-1].latitude) * fraction
+                let lon = coords[i-1].longitude + (coords[i].longitude - coords[i-1].longitude) * fraction
+                let checkpointCoord = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                
+                var compass: String = ""
+                if let lastCoord = lastCheckpoint {
+                    let bearingValue = self.bearing(from: lastCoord, to: checkpointCoord)
+                    compass = self.compassDirection(from: bearingValue)
+                } else {
+                    let bearingValue = self.bearing(from: coords.first!, to: checkpointCoord)
+                    compass = self.compassDirection(from: bearingValue)
+                }
+                
+                checkpoints.append(Checkpoint(coordinate: checkpointCoord, compassDirection: compass))
+                lastCheckpoint = checkpointCoord
+                targetDistance += interval
+            }
+        }
+        
+        if let lastCoord = coords.last {
+            checkpoints.append(Checkpoint(coordinate: lastCoord, compassDirection: "Arrived"))
+        }
+        
+        return checkpoints
+    }
+    
+    func updateNextCheckpoint(_ checkpoint: Checkpoint) {
+        if let current = currentTargetCheckpoint {
+            lastReachedCheckpoint = current
+            let reachedAnnotation = CheckpointAnnotation()
+            reachedAnnotation.coordinate = current.coordinate
+            reachedAnnotation.title = "Reached Checkpoint"
+            reachedAnnotation.checkpointType = .reached
+            self.mapView.addAnnotation(reachedAnnotation)
+        }
+        currentTargetCheckpoint = checkpoint
+        
+        for annotation in mapView.annotations {
+            if let checkpointAnno = annotation as? CheckpointAnnotation, checkpointAnno.checkpointType == .target {
+                mapView.removeAnnotation(checkpointAnno)
+            }
+        }
+        let targetAnnotation = CheckpointAnnotation()
+        targetAnnotation.coordinate = checkpoint.coordinate
+        targetAnnotation.title = "Target Checkpoint"
+        targetAnnotation.checkpointType = .target
+        self.mapView.addAnnotation(targetAnnotation)
+        
+        let checkpointData: [String: Any] = [
+            "lat": String(format: "%.6f", checkpoint.coordinate.latitude),
+            "lon": String(format: "%.6f", checkpoint.coordinate.longitude),
+            "compass": checkpoint.compassDirection
+        ]
+        databaseRef.child("user/command/nextCheckpoint").setValue(checkpointData) { error, _ in
+            if let error = error {
+                print("Error updating checkpoint in Firebase: \(error.localizedDescription)")
+            } else {
+                print("Updated next checkpoint: \(checkpointData)")
+            }
+        }
+    }
+    
+    func bearing(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) -> Double {
+        let lat1 = from.latitude * .pi / 180.0
+        let lon1 = from.longitude * .pi / 180.0
+        let lat2 = to.latitude * .pi / 180.0
+        let lon2 = to.longitude * .pi / 180.0
+        let dLon = lon2 - lon1
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        var bearing = atan2(y, x) * 180 / .pi
+        bearing = (bearing + 360).truncatingRemainder(dividingBy: 360)
+        return bearing
+    }
+    
+    func compassDirection(from bearing: Double) -> String {
+        let directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        let index = Int((bearing + 22.5) / 45.0) % 8
+        return directions[index]
+    }
+    
+    func addAnnotation(for coordinate: CLLocationCoordinate2D, title: String) {
+        let annotation = MKPointAnnotation()
+        annotation.coordinate = coordinate
+        annotation.title = title
+        mapView.addAnnotation(annotation)
+        
+        let region = MKCoordinateRegion(center: coordinate, latitudinalMeters: 500, longitudinalMeters: 500)
+        mapView.setRegion(region, animated: true)
+    }
+    
+    func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+        if annotation is MKUserLocation {
+            return nil
+        }
+        
+        if let checkpointAnno = annotation as? CheckpointAnnotation {
+            let identifier = "CheckpointAnnotation"
+            var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
+            if annotationView == nil {
+                annotationView = MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                annotationView?.canShowCallout = true
+            } else {
+                annotationView?.annotation = annotation
+            }
+            
+            switch checkpointAnno.checkpointType {
+            case .target:
+                annotationView?.image = UIImage(named: "greenArrow")
+            case .reached:
+                annotationView?.image = UIImage(named: "yellowArrow")
+            default:
+                annotationView?.image = UIImage(named: "defaultPin")
+            }
+            return annotationView
+        }
+        
+        let identifier = "DefaultAnnotation"
+        var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKPinAnnotationView
+        if annotationView == nil {
+            annotationView = MKPinAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+            annotationView?.canShowCallout = true
+        } else {
+            annotationView?.annotation = annotation
+        }
+        return annotationView
+    }
+    
+    func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+        if let polyline = overlay as? MKPolyline {
+            let renderer = MKPolylineRenderer(polyline: polyline)
+            renderer.strokeColor = UIColor.blue
+            renderer.lineWidth = 4.0
+            return renderer
+        }
+        return MKOverlayRenderer(overlay: overlay)
+    }
+    
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return checkpointList.count
+    }
+    
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "CheckpointCell", for: indexPath)
+        let checkpoint = checkpointList[indexPath.row]
+        cell.textLabel?.text = "(\(String(format: "%.6f", checkpoint.coordinate.latitude)), \(String(format: "%.6f", checkpoint.coordinate.longitude)))"
+        cell.detailTextLabel?.text = "Compass: \(checkpoint.compassDirection)"
+        return cell
+    }
+    
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        let checkpoint = checkpointList[indexPath.row]
+        let region = MKCoordinateRegion(center: checkpoint.coordinate, latitudinalMeters: 500, longitudinalMeters: 500)
+        mapView.setRegion(region, animated: true)
+        for annotation in mapView.annotations {
+            if let pointAnnotation = annotation as? MKPointAnnotation {
+                if abs(pointAnnotation.coordinate.latitude - checkpoint.coordinate.latitude) < 0.0001 &&
+                   abs(pointAnnotation.coordinate.longitude - checkpoint.coordinate.longitude) < 0.0001 {
+                    mapView.selectAnnotation(pointAnnotation, animated: true)
+                    break
+                }
+            }
+        }
+    }
+    
+    @IBAction func sendNextCheckpointPressed(_ sender: UIButton) {
+        if !checkpointList.isEmpty {
+            let nextCheckpoint = checkpointList.removeFirst()
+            updateNextCheckpoint(nextCheckpoint)
+            checkpointsTableView.reloadData()
+        } else {
+            print("All checkpoints have been sent.")
+        }
+    }
+    
+    @IBAction func callTheRover(_ sender: UIButton) {
+        locationManager.startUpdatingLocation()
+    }
+    
+    @IBAction func signOut(_ sender: UIButton) {
+        do {
+            try Auth.auth().signOut()
+            self.performSegue(withIdentifier: "ToTheWelcome", sender: self)
+        } catch let signOutError as NSError {
+            print("Sign out error: \(signOutError.localizedDescription)")
+        }
+    }
+}
