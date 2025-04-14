@@ -1,0 +1,30 @@
+import UIKit
+import FirebaseCore
+import FirebaseFirestore
+import FirebaseAuth
+
+class LoginViewController: UIViewController {
+
+    @IBOutlet weak var passwordLabel: UITextField!
+    @IBOutlet weak var mailLabel: UITextField!
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+    }
+    
+    @IBAction func loginPressed(_ sender: UIButton) {
+        if let email = mailLabel.text, let password = passwordLabel.text {
+            Auth.auth().signIn(withEmail: email, password: password) { [weak self] authResult, error in
+                if let e = error {
+                    print(e)
+                } else {
+                    self!.performSegue(withIdentifier: "LoginToApp", sender: self)
+                }
+            }
+        }
+    }
+    
+    @IBAction func returnPressed(_ sender: UIButton) {
+        self.dismiss(animated: true)
+    }
+}
