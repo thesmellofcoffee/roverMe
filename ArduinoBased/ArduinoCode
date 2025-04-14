@@ -1,0 +1,289 @@
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <Stepper.h>
+#include <math.h>
+
+SoftwareSerial gpsSerial(2, 3);
+TinyGPSPlus gps;
+
+#define NODEMCU_RX 4
+#define NODEMCU_TX 5
+SoftwareSerial nodeSerial(NODEMCU_RX, NODEMCU_TX);
+
+#define RIGHT_IN1 9
+#define RIGHT_IN2 8
+#define RIGHT_IN3 7
+#define RIGHT_IN4 6
+#define LEFT_IN1 10
+#define LEFT_IN2 11
+#define LEFT_IN3 12
+#define LEFT_IN4 13
+
+enum SystemState { WAIT_FOR_CHECKPOINT, NAVIGATION };
+SystemState currentState = WAIT_FOR_CHECKPOINT;
+
+float targetLat = 0.0;
+float targetLon = 0.0;
+String targetCompass = "";
+
+const float POSITION_THRESHOLD_METERS = 2.0;
+const float HEADING_ERROR_TOLERANCE = 5.0;
+float currentHeading = 0.0;
+const float TURN_RATE = 0.04;
+bool collisionDetected = false;
+String checkpointBuffer = "";
+
+const int stepsPerRevolution = 200;
+const int steps120 = 12;
+const int COLLISION_DISTANCE_THRESHOLD = 20;
+const int motorPin1 = A0;
+const int motorPin2 = A1;
+const int motorPin3 = A2;
+const int motorPin4 = A3;
+Stepper stepperMotor(stepsPerRevolution, motorPin1, motorPin3, motorPin2, motorPin4);
+const int trigPin = A4;
+const int echoPin = A5;
+
+void setup() {
+  Serial.begin(9600);
+  gpsSerial.begin(9600);
+  nodeSerial.begin(9600);
+  pinMode(RIGHT_IN1, OUTPUT); pinMode(RIGHT_IN2, OUTPUT);
+  pinMode(RIGHT_IN3, OUTPUT); pinMode(RIGHT_IN4, OUTPUT);
+  pinMode(LEFT_IN1, OUTPUT); pinMode(LEFT_IN2, OUTPUT);
+  pinMode(LEFT_IN3, OUTPUT); pinMode(LEFT_IN4, OUTPUT);
+  pinMode(trigPin, OUTPUT); pinMode(echoPin, INPUT);
+  stepperMotor.setSpeed(15);
+  stopMotors();
+  Serial.println("Sistem başlatıldı... (Başlangıç yönü: Kuzey - 0°)");
+  Serial.println("Radar moduna hoş geldiniz!");
+}
+
+void loop() {
+  if (currentState == WAIT_FOR_CHECKPOINT) {
+    bool checkpointReceived = false;
+    unsigned long startTime = millis();
+    while (millis() - startTime < 10000) {
+      while (nodeSerial.available()) {
+        char c = nodeSerial.read();
+        checkpointBuffer += c;
+      }
+    }
+    checkpointBuffer.trim();
+    Serial.println("Toplanan Yanıt:");
+    Serial.println(checkpointBuffer);
+    if (parseCheckpointData(checkpointBuffer, targetLat, targetLon, targetCompass)) {
+      checkpointReceived = true;
+      Serial.println("Ayrıştırılan checkpoint:");
+      Serial.print("Latitude: "); Serial.println(targetLat, 6);
+      Serial.print("Longitude: "); Serial.println(targetLon, 6);
+      Serial.print("Compass (referans): "); Serial.println(targetCompass);
+      nodeSerial.end();
+      adjustDirection(targetCompass);
+      currentState = NAVIGATION;
+    } else {
+      Serial.println("Geçerli checkpoint verisi alınamadı.");
+      delay(6000);
+      checkpointBuffer = "";
+      Serial.println("Tekrar 'again' komutu gönderiliyor...");
+      nodeSerial.println("again");
+    }
+  }
+  else if (currentState == NAVIGATION) {
+    performDynamicNavigation();
+    performRadarScan();
+  }
+}
+
+bool parseCheckpointData(String data, float &lat, float &lon, String &compass) {
+  data.trim();
+  int compKey = data.indexOf("\"compass\":\"");
+  if (compKey == -1) return false;
+  int compStart = compKey + String("\"compass\":\"").length();
+  int compEnd = data.indexOf("\"", compStart);
+  if (compEnd == -1) return false;
+  compass = data.substring(compStart, compEnd);
+  int latKey = data.indexOf("\"lat\":\"");
+  if (latKey == -1) return false;
+  int latStart = latKey + String("\"lat\":\"").length();
+  int latEnd = data.indexOf("\"", latStart);
+  if (latEnd == -1) return false;
+  lat = data.substring(latStart, latEnd).toFloat();
+  int lonKey = data.indexOf("\"lon\":\"");
+  if (lonKey == -1) return false;
+  int lonStart = lonKey + String("\"lon\":\"").length();
+  int lonEnd = data.indexOf("\"", lonStart);
+  if (lonEnd == -1) return false;
+  lon = data.substring(lonStart, lonEnd).toFloat();
+  return true;
+}
+
+void performDynamicNavigation() {
+  while (gpsSerial.available() > 0) {
+    char c = gpsSerial.read();
+    gps.encode(c);
+  }
+  if (collisionDetected) {
+    stopMotors();
+    Serial.println("Çarpma tehlikesi nedeniyle ilerleme durduruldu.");
+    delay(500);
+    return;
+  }
+  if (gps.location.isValid() && gps.location.age() < 1000) {
+    float currentLat = gps.location.lat();
+    float currentLon = gps.location.lng();
+    float distance = distanceBetween(currentLat, currentLon, targetLat, targetLon);
+    float desiredBearing = calculateBearing(currentLat, currentLon, targetLat, targetLon);
+    float headingError = desiredBearing - currentHeading;
+    if (headingError > 180) headingError -= 360;
+    if (headingError < -180) headingError += 360;
+    Serial.print("Mesafe: "); Serial.print(distance); Serial.print(" m, ");
+    Serial.print("İstenen Yön: "); Serial.print(desiredBearing); Serial.print("°, ");
+    Serial.print("Mevcut Yön: "); Serial.print(currentHeading); Serial.print("°, ");
+    Serial.print("Hata: "); Serial.print(headingError); Serial.println("°");
+    if (distance < POSITION_THRESHOLD_METERS) {
+      stopMotors();
+      Serial.println("Varış noktasına ulaşıldı!");
+      delay(1000);
+      nodeSerial.begin(9600);
+      currentState = WAIT_FOR_CHECKPOINT;
+      return;
+    }
+    if (abs(headingError) > HEADING_ERROR_TOLERANCE) {
+      if (headingError > 0) {
+        Serial.print("Sağa dönüş gerekli: "); Serial.print(headingError); Serial.println("°");
+        performTankTurnRight(headingError);
+      } else {
+        Serial.print("Sola dönüş gerekli: "); Serial.print(-headingError); Serial.println("°");
+        performTankTurnLeft(-headingError);
+      }
+    } else {
+      moveForward();
+    }
+  }
+  delay(500);
+}
+
+float distanceBetween(float lat1, float lon1, float lat2, float lon2) {
+  const float R = 6371000;
+  float dLat = radians(lat2 - lat1);
+  float dLon = radians(lon2 - lon1);
+  float a = sin(dLat / 2) * sin(dLat / 2) + cos(radians(lat1)) * cos(radians(lat2)) * sin(dLon / 2) * sin(dLon / 2);
+  float c = 2 * atan2(sqrt(a), sqrt(1 - a));
+  return R * c;
+}
+
+float calculateBearing(float lat1, float lon1, float lat2, float lon2) {
+  float radLat1 = radians(lat1);
+  float radLat2 = radians(lat2);
+  float dLon = radians(lon2 - lon1);
+  float y = sin(dLon) * cos(radLat2);
+  float x = cos(radLat1) * sin(radLat2) - sin(radLat1) * cos(radLat2) * cos(dLon);
+  float brng = atan2(y, x);
+  brng = degrees(brng);
+  if (brng < 0) brng += 360;
+  return brng;
+}
+
+void adjustDirection(String compass) {
+  Serial.print("Gelen referans compass: ");
+  Serial.println(compass);
+  if (compass == "N") {
+    Serial.println("Referans: Kuzey, dönüş gerekmez.");
+  } else if (compass == "NE" || compass == "E" || compass == "SE") {
+    Serial.println("Hafif sağ dönüş referansı uygulanıyor...");
+    performTankTurnRight(10);
+  } else if (compass == "NW" || compass == "W" || compass == "SW") {
+    Serial.println("Hafif sol dönüş referansı uygulanıyor...");
+    performTankTurnLeft(10);
+  } else {
+    Serial.println("Bilinmeyen referans yön, dönüş yapılmadı.");
+  }
+}
+
+void performTankTurnLeft(float angle) {
+  unsigned long duration = (unsigned long)(angle / TURN_RATE);
+  turnLeft();
+  delay(duration);
+  stopMotors();
+  currentHeading -= angle;
+  if (currentHeading < 0) currentHeading += 360;
+  Serial.print("Yeni internal heading: "); Serial.println(currentHeading);
+}
+
+void performTankTurnRight(float angle) {
+  unsigned long duration = (unsigned long)(angle / TURN_RATE);
+  turnRight();
+  delay(duration);
+  stopMotors();
+  currentHeading += angle;
+  if (currentHeading >= 360) currentHeading -= 360;
+  Serial.print("Yeni internal heading: "); Serial.println(currentHeading);
+}
+
+void moveForward() {
+  digitalWrite(RIGHT_IN1, LOW);  digitalWrite(RIGHT_IN2, HIGH);
+  digitalWrite(RIGHT_IN3, LOW);  digitalWrite(RIGHT_IN4, HIGH);
+  digitalWrite(LEFT_IN1, HIGH);  digitalWrite(LEFT_IN2, LOW);
+  digitalWrite(LEFT_IN3, HIGH);  digitalWrite(LEFT_IN4, LOW);
+  Serial.println("İleri gidiliyor...");
+}
+
+void turnRight() {
+  digitalWrite(LEFT_IN1, HIGH);  digitalWrite(LEFT_IN2, LOW);
+  digitalWrite(LEFT_IN3, HIGH);  digitalWrite(LEFT_IN4, LOW);
+  digitalWrite(RIGHT_IN1, HIGH); digitalWrite(RIGHT_IN2, LOW);
+  digitalWrite(RIGHT_IN3, HIGH); digitalWrite(RIGHT_IN4, LOW);
+  Serial.println("Sağa dönülüyor...");
+}
+
+void turnLeft() {
+  digitalWrite(LEFT_IN1, LOW);   digitalWrite(LEFT_IN2, HIGH);
+  digitalWrite(LEFT_IN3, LOW);   digitalWrite(LEFT_IN4, HIGH);
+  digitalWrite(RIGHT_IN1, LOW);  digitalWrite(RIGHT_IN2, HIGH);
+  digitalWrite(RIGHT_IN3, LOW);  digitalWrite(RIGHT_IN4, HIGH);
+  Serial.println("Sola dönülüyor...");
+}
+
+void stopMotors() {
+  digitalWrite(RIGHT_IN1, LOW); digitalWrite(RIGHT_IN2, LOW);
+  digitalWrite(RIGHT_IN3, LOW); digitalWrite(RIGHT_IN4, LOW);
+  digitalWrite(LEFT_IN1, LOW);  digitalWrite(LEFT_IN2, LOW);
+  digitalWrite(LEFT_IN3, LOW);  digitalWrite(LEFT_IN4, LOW);
+  Serial.println("Motorlar durdu.");
+}
+
+long measureDistance() {
+  digitalWrite(trigPin, LOW); delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH); delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  return duration * 0.034 / 2;
+}
+
+void performRadarScan() {
+  for (int i = 0; i < steps120; i++) {
+    float angle = (i * 120.0) / steps120;
+    long distance = measureDistance();
+    if (distance == 0) {
+      Serial.print("Açı: "); Serial.print(angle);
+      Serial.println("°, Mesafe: Ölçüm hatası");
+    } else {
+      Serial.print("Açı: "); Serial.print(angle);
+      Serial.print("°, Mesafe: "); Serial.print(distance); Serial.println(" cm");
+      if (distance < COLLISION_DISTANCE_THRESHOLD) {
+        collisionDetected = true;
+        stopMotors();
+        Serial.println("Çarpma tehlikesi algılandı! Rover durdu.");
+      } else {
+        collisionDetected = false;
+      }
+    }
+    stepperMotor.step(1);
+    delay(500);
+  }
+  for (int i = 0; i < steps120; i++) {
+    stepperMotor.step(-1);
+    delay(50);
+  }
+}
