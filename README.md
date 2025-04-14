@@ -52,3 +52,59 @@ RoverMe is an autonomous rover designed to navigate to a user's location upon re
 ## 🔥 Firebase Integration
 The project utilizes Firebase Realtime Database for remote commands and location tracking:
 
+
+
+
+
+
+
+
+
+
+🚀 RoverMe – Autonomes Rover-Projekt
+
+RoverMe ist ein autonomer Rover, der auf Anfrage über eine iOS-App (Swift) zum Standort des Nutzers navigiert. Das Projekt unterstützt mehrere Hardware-Konfigurationen, darunter Raspberry Pi Pico WH, Arduino und NodeMCU. Die Kommunikation erfolgt über Firebase, wodurch Standortdaten und Befehle in Echtzeit übermittelt werden können.
+
+🎯 Projektmerkmale
+Autonome Navigation mit GPS-Unterstützung
+Firebase-Echtzeitintegration für Daten
+Multi-Plattform-Support (Raspberry Pi Pico WH, Arduino, NodeMCU)
+Benutzerfreundliche iOS-Anwendung (Swift)
+Fernsteuerung per Firebase und IR-Fernbedienung
+„Tank Turn“ (Drehung auf der Stelle)
+🛠 Hardwarekomponenten
+Raspberry Pi Pico WH
+Arduino Duemilanove (alternative Implementierung)
+NodeMCU ESP8266 (alternative Implementierung)
+Neo-6M GPS-Modul
+HW-95 Motortreiber (2 Stück, steuern 4 DC-Motoren)
+Ultraschallsensor (HC-SR04)
+IR-Empfänger und Fernbedienungsmodul
+Stromversorgung (Batterie und Spannungsregler)
+💻 Softwarekomponenten
+Raspberry Pi Pico WH: Implementierung in MicroPython / C für leistungsstarke Motorsteuerung und GPS-Verwaltung.
+Arduino: C/C++-Implementierung für grundlegende Navigation und GPS-Verarbeitung (alternative Lösung).
+NodeMCU: ESP8266 Arduino IDE-Implementierung für Firebase-Kommunikation und Motorsteuerung (alternative Lösung).
+Swift-App: Benutzeroberfläche zum Senden von Befehlen, zur Anzeige des Rover-Standorts auf einer Karte und zur Interaktion mit Firebase.
+🚦 Einrichtungs- und Installationsanleitung
+🔧 Hardwareinstallation
+
+Ausführliche Schaltpläne für Motor- und Sensoranschlüsse befinden sich im Ordner Hardware Schematics.
+
+🥧 Raspberry Pi Pico WH
+
+Installieren Sie MicroPython oder kompilieren Sie die bereitgestellte C-Firmware.
+Laden Sie die Hauptskripte über Thonny oder eine Kommandozeile hoch.
+📟 Arduino (Optional)
+
+Verwenden Sie die Arduino IDE, um den Code aus dem Ordner arduino/ zu kompilieren und hochzuladen.
+📶 NodeMCU (Optional)
+
+Laden Sie die NodeMCU-Firmware über die Arduino IDE aus dem Ordner nodemcu/ hoch.
+📱 Swift-Anwendung
+
+Öffnen Sie das Projekt in Xcode aus dem Ordner ios_app/.
+Konfigurieren Sie die Firebase-Zugangsdaten in der Konfigurationsdatei der App.
+Führen Sie die App im Simulator oder auf einem physischen Gerät aus.
+🔥 Firebase-Integration
+Das Projekt verwendet die Firebase Realtime Database, um Befehle in Echtzeit zu empfangen und den Standort des Rovers zu verfolgen.
