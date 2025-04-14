@@ -1,0 +1,43 @@
+Projektübersicht
+
+Dieses Rover-Projekt wurde in zwei Schritten entwickelt. Die erste Version verwendete einen Arduino Duemilanove, während NodeMCU die Internetverbindung bereitstellte. Anschließend bauten wir das System mit einem Raspberry Pi Pico WH neu auf, der sein integriertes WLAN-Modul für die Konnektivität nutzte. Beide Versionen enthalten die gleichen grundlegenden Komponenten wie GPS, Motoren, Schrittmotor und Ultraschallsensor. In beiden Fällen verwendeten wir zahlreiche Jumper-Kabel und verstärkten die Verbindungen durch Löten.
+
+Komponentenliste
+
+Arduino Duemilanove-Version
+Arduino Duemilanove
+Diente als Hauptcontroller zur Steuerung von Sensoren und Motoren.
+4 DC-Motoren
+Sorgten für die Fortbewegung des Rovers.
+NodeMCU
+Stellte die WLAN-Verbindung und die Fernsteuerung bereit.
+Neo-6M GPS-Modul
+Diente zur Positionsbestimmung und Routenplanung.
+AMS1117 (Spannungsregler)
+Sorgte für eine konstante Spannungsversorgung der verschiedenen Komponenten.
+PM35L-048-HPD4 Schrittmotor
+Wurde für zusätzliche mechanische Bewegungen oder präzise Drehfunktionen verwendet.
+Ultraschallsensor
+Diente zur Erkennung von Hindernissen und zur Distanzmessung.
+HW-95 Motortreiber (2 Stück)
+Steuerte die DC-Motoren und regelte deren Leistung.
+Raspberry Pi Pico WH-Version
+Raspberry Pi Pico WH
+Diente als Hauptcontroller in der zweiten Version und nutzte sein integriertes WLAN-Modul für die Internetverbindung.
+Neo-6M GPS-Modul
+Wie in der ersten Version diente es zur GPS-Ortung.
+5V Regler
+Versorgte die Systemkomponenten mit einer stabilen 5V-Spannung.
+4-Kanal Logic Converter
+Passte Spannungspegel zwischen unterschiedlichen Komponenten an.
+HW-95 Motortreiber (2 Stück)
+Steuerte dieselben DC-Motoren wie in der Arduino-Version.
+PM35L-048-HPD4 Schrittmotor
+Wurde aus der ersten Version übernommen und ermöglichte präzise Bewegungen.
+Ultraschallsensor
+Blieb zur Hinderniserkennung und Distanzmessung erhalten.
+Gemeinsame Komponenten und zusätzliche Details
+Zahlreiche Jumper-Kabel
+Erleichterten die Prototypenentwicklung und den einfachen Anschluss der Module.
+Lötverbindungen
+Sorgten an entscheidenden Verbindungsstellen für dauerhafte und verlässliche Kontakte.
