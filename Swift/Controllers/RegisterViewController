@@ -1,0 +1,30 @@
+import UIKit
+import FirebaseCore
+import FirebaseFirestore
+import FirebaseAuth
+
+class RegisterViewController: UIViewController {
+
+    @IBOutlet weak var mailLabel: UITextField!
+    @IBOutlet weak var passwordLabel: UITextField!
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+    }
+    
+    @IBAction func registerPressed(_ sender: UIButton) {
+        if let email = mailLabel.text, let password = passwordLabel.text {
+            Auth.auth().createUser(withEmail: email, password: password) { authResult, error in
+                if let e = error {
+                    print(e)
+                } else {
+                    self.performSegue(withIdentifier: "RegisterToApp", sender: self)
+                }
+            }
+        }
+    }
+    
+    @IBAction func returnPressed(_ sender: UIButton) {
+        self.dismiss(animated: true)
+    }
+}
