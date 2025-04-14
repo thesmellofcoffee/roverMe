@@ -1,0 +1,43 @@
+Project Overview
+
+This rover project was developed in two stages. The first stage used an Arduino Duemilanove, with the NodeMCU providing internet connectivity. Afterwards, we rebuilt the system using a Raspberry Pi Pico WH, which utilized its embedded Wi-Fi module for connectivity. Both versions maintained the same fundamental hardware such as the GPS, motors, step motor, and ultrasonic sensor. In all cases, we used numerous jumper wires and reinforced connections through soldering.
+
+Component List
+
+Arduino Duemilanove Version
+Arduino Duemilanove
+Served as the main controller, handling both sensors and motor control.
+4 DC Motors
+Provided mobility for the rover.
+NodeMCU
+Enabled Wi-Fi connectivity and remote control.
+Neo-6M GPS Module
+Used for location tracking and route planning.
+AMS1117 (Voltage Regulator)
+Ensured consistent voltage levels for various components.
+PM35L-048-HPD4 Step Motor
+Used for additional mechanical motion or precise rotational tasks.
+Ultrasonic Sensor
+Detected obstacles and measured distances.
+HW-95 Motor Driver Board (2 units)
+Controlled the DC motors and managed their power.
+Raspberry Pi Pico WH Version
+Raspberry Pi Pico WH
+Served as the main controller in the second version, utilizing its built-in Wi-Fi module for internet connectivity.
+Neo-6M GPS Module
+As in the first version, it provided GPS tracking.
+5V Regulator
+Supplied stable 5V power to the system components.
+4-Channel Logic Converter
+Ensured proper voltage level shifting between components.
+HW-95 Motor Driver Board (2 units)
+Controlled the same DC motors as in the Arduino version.
+PM35L-048-HPD4 Step Motor
+Retained from the first version for precise movements.
+Ultrasonic Sensor
+Retained for detecting obstacles and measuring distance.
+Common Components and Additional Details
+Plenty of Jumper Wires
+Used throughout the project for prototyping and easy connections.
+Soldered Connections
+Provided permanent, reliable connections at critical points.
